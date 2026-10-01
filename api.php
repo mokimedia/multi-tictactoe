@@ -114,11 +114,51 @@ function winning_symbol(string $board): ?string
     return null;
 }
 
-function choose_ai_move(string $board): int
+function minimax_score(string $board, string $turn, int $depth): int
 {
+    $winner = winning_symbol($board);
+    if ($winner === 'O') {
+        return 10 - $depth;
+    }
+    if ($winner === 'X') {
+        return $depth - 10;
+    }
+    if (!str_contains($board, '-')) {
+        return 0;
+    }
+
+    $scores = [];
+    foreach (str_split($board) as $cell => $value) {
+        if ($value !== '-') {
+            continue;
+        }
+        $candidate = $board;
+        $candidate[$cell] = $turn;
+        $scores[] = minimax_score($candidate, $turn === 'O' ? 'X' : 'O', $depth + 1);
+    }
+
+    return $turn === 'O' ? max($scores) : min($scores);
+}
+
+function choose_ai_move(string $board, string $difficulty): int
+{
+    $available = [];
+    foreach (str_split($board) as $cell => $value) {
+        if ($value === '-') {
+            $available[] = $cell;
+        }
+    }
+    if ($available === []) {
+        throw new LogicException('No open square is available for the AI.');
+    }
+
+    if ($difficulty === 'easy') {
+        return $available[random_int(0, count($available) - 1)];
+    }
+
     foreach (['O', 'X'] as $symbol) {
-        foreach (str_split($board) as $cell => $value) {
-            if ($value !== '-') {
+        foreach ($available as $cell) {
+            if ($board[$cell] !== '-') {
                 continue;
             }
 
@@ -130,19 +170,171 @@ function choose_ai_move(string $board): int
         }
     }
 
+    if ($difficulty === 'hard') {
+        $bestMove = $available[0];
+        $bestScore = PHP_INT_MIN;
+        foreach ($available as $cell) {
+            $candidate = $board;
+            $candidate[$cell] = 'O';
+            $score = minimax_score($candidate, 'X', 1);
+            if ($score > $bestScore) {
+                $bestScore = $score;
+                $bestMove = $cell;
+            }
+        }
+        return $bestMove;
+    }
+
     foreach ([4, 0, 2, 6, 8, 1, 3, 5, 7] as $cell) {
         if ($board[$cell] === '-') {
             return $cell;
         }
     }
 
-    throw new LogicException('No open square is available for the AI.');
+    throw new LogicException('AI could not select a move.');
+}
+
+function initial_checkers_board(): string
+{
+    $board = str_repeat('-', 64);
+    for ($row = 0; $row < 3; $row++) {
+        for ($column = 0; $column < 8; $column++) {
+            if (($row + $column) % 2 === 1) {
+                $board[$row * 8 + $column] = 'x';
+            }
+        }
+    }
+    for ($row = 5; $row < 8; $row++) {
+        for ($column = 0; $column < 8; $column++) {
+            if (($row + $column) % 2 === 1) {
+                $board[$row * 8 + $column] = 'o';
+            }
+        }
+    }
+
+    return $board;
+}
+
+function checkers_piece_side(string $piece): ?string
+{
+    return match (strtolower($piece)) {
+        'x' => 'X',
+        'o' => 'O',
+        default => null,
+    };
+}
+
+function checkers_moves(string $board, string $side, ?int $forcedPiece = null): array
+{
+    $captures = [];
+    $steps = [];
+    $directions = $side === 'X' ? [1] : [-1];
+
+    for ($from = 0; $from < 64; $from++) {
+        $piece = $board[$from];
+        if (checkers_piece_side($piece) !== $side || ($forcedPiece !== null && $from !== $forcedPiece)) {
+            continue;
+        }
+
+        $row = intdiv($from, 8);
+        $column = $from % 8;
+        $pieceDirections = ctype_upper($piece) ? [-1, 1] : $directions;
+        foreach ($pieceDirections as $rowDirection) {
+            foreach ([-1, 1] as $columnDirection) {
+                $nextRow = $row + $rowDirection;
+                $nextColumn = $column + $columnDirection;
+                $landingRow = $row + 2 * $rowDirection;
+                $landingColumn = $column + 2 * $columnDirection;
+
+                if ($landingRow >= 0 && $landingRow < 8 && $landingColumn >= 0 && $landingColumn < 8) {
+                    $middle = ($row + $rowDirection) * 8 + $nextColumn;
+                    $to = $landingRow * 8 + $landingColumn;
+                    $opponent = checkers_piece_side($board[$middle]);
+                    if ($opponent !== null && $opponent !== $side && $board[$to] === '-') {
+                        $captures[] = ['from' => $from, 'to' => $to, 'capture' => $middle];
+                    }
+                }
+
+                if ($forcedPiece === null && $nextRow >= 0 && $nextRow < 8 && $nextColumn >= 0 && $nextColumn < 8) {
+                    $to = $nextRow * 8 + $nextColumn;
+                    if ($board[$to] === '-') {
+                        $steps[] = ['from' => $from, 'to' => $to, 'capture' => null];
+                    }
+                }
+            }
+        }
+    }
+
+    return $captures !== [] ? $captures : $steps;
+}
+
+function play_checkers_move(string $board, array $move): array
+{
+    $piece = $board[$move['from']];
+    $board[$move['from']] = '-';
+    $board[$move['to']] = $piece;
+    if ($move['capture'] !== null) {
+        $board[$move['capture']] = '-';
+    }
+
+    $row = intdiv($move['to'], 8);
+    $promoted = ($piece === 'x' && $row === 7) || ($piece === 'o' && $row === 0);
+    if ($promoted) {
+        $board[$move['to']] = strtoupper($piece);
+    }
+
+    return ['board' => $board, 'promoted' => $promoted];
+}
+
+function choose_checkers_ai_move(string $board, string $difficulty, ?int $forcedPiece = null): array
+{
+    $moves = checkers_moves($board, 'O', $forcedPiece);
+    if ($moves === []) {
+        throw new LogicException('No legal checkers move is available for the AI.');
+    }
+    if ($difficulty === 'easy') {
+        return $moves[random_int(0, count($moves) - 1)];
+    }
+
+    $ranked = [];
+    foreach ($moves as $move) {
+        $result = play_checkers_move($board, $move);
+        $piece = $result['board'][$move['to']];
+        $row = intdiv($move['to'], 8);
+        $score = ($move['capture'] !== null ? 12 : 0)
+            + ($result['promoted'] ? 10 : 0)
+            + (7 - $row)
+            + (ctype_upper($piece) ? 3 : 0)
+            + (random_int(0, 10) / 100);
+
+        if ($difficulty === 'hard') {
+            $playerReplies = checkers_moves($result['board'], 'X');
+            foreach ($playerReplies as $reply) {
+                $replyResult = play_checkers_move($result['board'], $reply);
+                $remainingAiPieces = 0;
+                foreach (str_split($replyResult['board']) as $pieceAfterReply) {
+                    if (checkers_piece_side($pieceAfterReply) === 'O') {
+                        $remainingAiPieces++;
+                    }
+                }
+                $opponentCapture = $reply['capture'] !== null ? 15 : 0;
+                $promotionThreat = $replyResult['promoted'] ? 4 : 0;
+                $score = min($score, $score - $opponentCapture - $promotionThreat + $remainingAiPieces);
+            }
+        }
+
+        $ranked[] = ['move' => $move, 'score' => $score];
+    }
+
+    usort($ranked, static fn (array $left, array $right): int => $right['score'] <=> $left['score']);
+    return $ranked[0]['move'];
 }
 
 function game_state(int $gameId, int $userId): array
 {
     $statement = db()->prepare(
-        'SELECT g.id, g.code, g.game_type, g.player_x_id, g.player_o_id, g.board, g.turn, g.status,
+        'SELECT g.id, g.code, g.game_kind, g.game_type, g.ai_difficulty, g.player_x_id, g.player_o_id,
+                g.board, g.turn, g.status, g.forced_piece,
                 g.winner_id, g.winner_symbol,
                 x.username AS player_x, o.username AS player_o
          FROM games g
@@ -158,6 +350,7 @@ function game_state(int $gameId, int $userId): array
     }
 
     $gameType = $game['game_type'] ?? 'multiplayer';
+    $gameKind = $game['game_kind'] ?? 'tic_tac_toe';
     if ((int) $game['player_x_id'] !== $userId && (int) ($game['player_o_id'] ?? 0) !== $userId) {
         respond(['error' => 'Game not found.'], 404);
     }
@@ -175,10 +368,21 @@ function game_state(int $gameId, int $userId): array
         'id' => (int) $game['id'],
         'code' => $game['code'],
         'mode' => $gameType,
+        'game_kind' => $gameKind,
+        'difficulty' => $game['ai_difficulty'] ?? 'medium',
         'board' => str_split($game['board']),
+        'forced_piece' => $game['forced_piece'] === null ? null : (int) $game['forced_piece'],
+        'legal_moves' => $gameKind === 'checkers'
+            ? checkers_moves(
+                $game['board'],
+                $yourSymbol,
+                $game['forced_piece'] === null ? null : (int) $game['forced_piece'],
+            )
+            : [],
         'status' => $game['status'],
         'turn' => $game['turn'],
         'your_symbol' => $yourSymbol,
+        'winner_symbol' => $winnerSymbol,
         'opponent' => $opponent,
         'winner' => $winnerSymbol === null
             ? null
@@ -261,7 +465,8 @@ try {
         case 'dashboard':
             $user = require_user();
             $statement = db()->prepare(
-                'SELECT g.id, g.code, g.game_type, g.status, g.updated_at, x.username AS player_x, o.username AS player_o
+                'SELECT g.id, g.code, g.game_kind, g.game_type, g.ai_difficulty, g.status, g.updated_at,
+                        x.username AS player_x, o.username AS player_o
                  FROM games g
                  JOIN users x ON x.id = g.player_x_id
                  LEFT JOIN users o ON o.id = g.player_o_id
@@ -273,7 +478,9 @@ try {
             $games = array_map(static fn (array $game): array => [
                 'id' => (int) $game['id'],
                 'code' => $game['code'],
+                'game_kind' => $game['game_kind'] ?? 'tic_tac_toe',
                 'mode' => $game['game_type'],
+                'difficulty' => $game['ai_difficulty'] ?? 'medium',
                 'status' => $game['status'],
                 'opponent' => $game['game_type'] === 'single_player'
                     ? 'Gridlock AI'
@@ -302,15 +509,20 @@ try {
 
         case 'create':
             $user = require_user();
+            $gameKind = $data['game_kind'] ?? 'tic_tac_toe';
+            if (!is_string($gameKind) || !in_array($gameKind, ['tic_tac_toe', 'checkers'], true)) {
+                respond(['error' => 'Choose a valid game.'], 422);
+            }
+            $initialBoard = $gameKind === 'checkers' ? initial_checkers_board() : '---------';
             $statement = db()->prepare(
-                'INSERT INTO games (code, player_x_id) VALUES (?, ?)',
+                'INSERT INTO games (code, player_x_id, game_kind, board) VALUES (?, ?, ?, ?)',
             );
             for ($attempt = 0; ; $attempt++) {
                 if ($attempt >= 5) {
                     respond(['error' => 'Could not create a unique game code. Please try again.'], 503);
                 }
                 try {
-                    $statement->execute([game_code(), $user['id']]);
+                    $statement->execute([game_code(), $user['id'], $gameKind, $initialBoard]);
                     break;
                 } catch (PDOException $exception) {
                     if ($exception->getCode() !== '23000') {
@@ -322,15 +534,25 @@ try {
 
         case 'create_ai':
             $user = require_user();
+            $gameKind = $data['game_kind'] ?? 'tic_tac_toe';
+            if (!is_string($gameKind) || !in_array($gameKind, ['tic_tac_toe', 'checkers'], true)) {
+                respond(['error' => 'Choose a valid game.'], 422);
+            }
+            $difficulty = $data['difficulty'] ?? 'medium';
+            if (!is_string($difficulty) || !in_array($difficulty, ['easy', 'medium', 'hard'], true)) {
+                respond(['error' => 'Choose a valid AI difficulty.'], 422);
+            }
             $statement = db()->prepare(
-                "INSERT INTO games (code, player_x_id, game_type, status) VALUES (?, ?, 'single_player', 'active')",
+                "INSERT INTO games (code, player_x_id, game_kind, game_type, ai_difficulty, board, status)
+                 VALUES (?, ?, ?, 'single_player', ?, ?, 'active')",
             );
             for ($attempt = 0; ; $attempt++) {
                 if ($attempt >= 5) {
                     respond(['error' => 'Could not create a unique game. Please try again.'], 503);
                 }
                 try {
-                    $statement->execute([game_code(), $user['id']]);
+                    $board = $gameKind === 'checkers' ? initial_checkers_board() : '---------';
+                    $statement->execute([game_code(), $user['id'], $gameKind, $difficulty, $board]);
                     break;
                 } catch (PDOException $exception) {
                     if ($exception->getCode() !== '23000') {
@@ -376,11 +598,38 @@ try {
             }
             respond(['game' => game_state($gameId, (int) $user['id'])]);
 
+        case 'abort':
+            $user = require_user();
+            $gameId = filter_var($data['game_id'] ?? null, FILTER_VALIDATE_INT);
+            if (!$gameId || $gameId < 1) {
+                respond(['error' => 'Invalid game.'], 422);
+            }
+
+            $connection = db();
+            $connection->beginTransaction();
+            $statement = $connection->prepare('SELECT player_x_id, player_o_id, status FROM games WHERE id = ? FOR UPDATE');
+            $statement->execute([$gameId]);
+            $game = $statement->fetch();
+            if (!$game || ((int) $game['player_x_id'] !== (int) $user['id'] && (int) ($game['player_o_id'] ?? 0) !== (int) $user['id'])) {
+                $connection->rollBack();
+                respond(['error' => 'Game not found.'], 404);
+            }
+            if ($game['status'] !== 'active') {
+                $connection->rollBack();
+                respond(['error' => 'This game is not accepting moves.'], 409);
+            }
+
+            $statement = $connection->prepare(
+                "UPDATE games SET status = 'aborted', forced_piece = NULL, updated_at = CURRENT_TIMESTAMP WHERE id = ?",
+            );
+            $statement->execute([$gameId]);
+            $connection->commit();
+            respond(['game' => game_state($gameId, (int) $user['id'])]);
+
         case 'move':
             $user = require_user();
             $gameId = filter_var($data['game_id'] ?? null, FILTER_VALIDATE_INT);
-            $cell = filter_var($data['cell'] ?? null, FILTER_VALIDATE_INT);
-            if (!$gameId || $gameId < 1 || $cell === false || $cell < 0 || $cell > 8) {
+            if (!$gameId || $gameId < 1) {
                 respond(['error' => 'Invalid move.'], 422);
             }
 
@@ -410,33 +659,115 @@ try {
                 respond(['error' => 'It is not your turn.'], 409);
             }
 
+            $gameKind = $game['game_kind'] ?? 'tic_tac_toe';
             $board = $game['board'];
-            if ($board[$cell] !== '-') {
-                $connection->rollBack();
-                respond(['error' => 'That square is already taken.'], 409);
-            }
+            $winnerSymbol = null;
+            $drawn = false;
+            $nextTurn = $game['turn'] === 'X' ? 'O' : 'X';
+            $forcedPiece = null;
 
-            $symbol = $game['turn'];
-            $board[$cell] = $symbol;
-            $winnerSymbol = winning_symbol($board);
-            $drawn = $winnerSymbol === null && !str_contains($board, '-');
-            if ($gameType === 'single_player' && $winnerSymbol === null && !$drawn) {
-                $board[choose_ai_move($board)] = 'O';
+            if ($gameKind === 'checkers') {
+                $from = filter_var($data['from'] ?? null, FILTER_VALIDATE_INT);
+                $to = filter_var($data['to'] ?? null, FILTER_VALIDATE_INT);
+                if ($from === false || $from < 0 || $from > 63 || $to === false || $to < 0 || $to > 63) {
+                    $connection->rollBack();
+                    respond(['error' => 'Invalid move.'], 422);
+                }
+
+                $legalMoves = checkers_moves($board, $game['turn'], $game['forced_piece'] === null ? null : (int) $game['forced_piece']);
+                $selectedMove = null;
+                foreach ($legalMoves as $move) {
+                    if ($move['from'] === $from && $move['to'] === $to) {
+                        $selectedMove = $move;
+                        break;
+                    }
+                }
+                if ($selectedMove === null) {
+                    $connection->rollBack();
+                    respond([
+                        'error' => $game['forced_piece'] !== null
+                            ? 'Continue capturing with the same piece.'
+                            : (array_filter($legalMoves, static fn (array $move): bool => $move['capture'] !== null)
+                                ? 'A capture is available and must be taken.'
+                                : 'Invalid move.'),
+                    ], 409);
+                }
+
+                $playedMove = play_checkers_move($board, $selectedMove);
+                $board = $playedMove['board'];
+                $side = $game['turn'];
+                $opponent = $side === 'X' ? 'O' : 'X';
+                $opponentPieces = 0;
+                foreach (str_split($board) as $piece) {
+                    if (checkers_piece_side($piece) === $opponent) {
+                        $opponentPieces++;
+                    }
+                }
+
+                if ($opponentPieces === 0 || checkers_moves($board, $opponent) === []) {
+                    $winnerSymbol = $side;
+                } elseif ($selectedMove['capture'] !== null && !$playedMove['promoted']
+                    && checkers_moves($board, $side, $to) !== []) {
+                    $nextTurn = $side;
+                    $forcedPiece = $to;
+                }
+
+                if ($winnerSymbol === null && $gameType === 'single_player' && $nextTurn === 'O') {
+                    do {
+                        $aiMove = choose_checkers_ai_move($board, $game['ai_difficulty'] ?? 'medium', $forcedPiece);
+                        $aiResult = play_checkers_move($board, $aiMove);
+                        $board = $aiResult['board'];
+                        $forcedPiece = null;
+                        $playerPieces = 0;
+                        foreach (str_split($board) as $piece) {
+                            if (checkers_piece_side($piece) === 'X') {
+                                $playerPieces++;
+                            }
+                        }
+                        if ($playerPieces === 0 || checkers_moves($board, 'X') === []) {
+                            $winnerSymbol = 'O';
+                            break;
+                        }
+                        $forcedMoves = $aiMove['capture'] !== null && !$aiResult['promoted']
+                            ? checkers_moves($board, 'O', $aiMove['to'])
+                            : [];
+                        if ($forcedMoves === []) {
+                            $nextTurn = 'X';
+                            break;
+                        }
+                        $forcedPiece = $aiMove['to'];
+                    } while (true);
+                }
+            } else {
+                $cell = filter_var($data['cell'] ?? null, FILTER_VALIDATE_INT);
+                if ($cell === false || $cell < 0 || $cell > 8 || $board[$cell] !== '-') {
+                    $connection->rollBack();
+                    respond(['error' => 'Invalid move.'], 422);
+                }
+
+                $symbol = $game['turn'];
+                $board[$cell] = $symbol;
                 $winnerSymbol = winning_symbol($board);
                 $drawn = $winnerSymbol === null && !str_contains($board, '-');
+                if ($gameType === 'single_player' && $winnerSymbol === null && !$drawn) {
+                    $board[choose_ai_move($board, $game['ai_difficulty'] ?? 'medium')] = 'O';
+                    $winnerSymbol = winning_symbol($board);
+                    $drawn = $winnerSymbol === null && !str_contains($board, '-');
+                }
+                $nextTurn = $gameType === 'single_player' ? 'X' : ($symbol === 'X' ? 'O' : 'X');
             }
 
             $status = ($winnerSymbol !== null || $drawn) ? 'finished' : 'active';
             $winnerId = $winnerSymbol === null
                 ? null
                 : ($winnerSymbol === 'X' ? (int) $game['player_x_id'] : ($game['player_o_id'] === null ? null : (int) $game['player_o_id']));
-            $nextTurn = $gameType === 'single_player' ? 'X' : ($symbol === 'X' ? 'O' : 'X');
             $statement = $connection->prepare(
                 'UPDATE games
-                 SET board = ?, turn = ?, status = ?, winner_id = ?, winner_symbol = ?, updated_at = CURRENT_TIMESTAMP
+                 SET board = ?, turn = ?, status = ?, winner_id = ?, winner_symbol = ?, forced_piece = ?,
+                     updated_at = CURRENT_TIMESTAMP
                  WHERE id = ?',
             );
-            $statement->execute([$board, $nextTurn, $status, $winnerId, $winnerSymbol, $gameId]);
+            $statement->execute([$board, $nextTurn, $status, $winnerId, $winnerSymbol, $forcedPiece, $gameId]);
 
             if ($status === 'finished') {
                 if ($gameType === 'single_player') {

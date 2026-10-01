@@ -1,6 +1,6 @@
 # Gridlock
 
-A tic-tac-toe app for a PHP, Apache, and MySQL (LAMP) server. Players create accounts, start multiplayer games with a six-character invite code, or play solo against the medium-strength Gridlock AI. Wins, losses, draws, and the leaderboard are stored in MySQL.
+A tic-tac-toe and American checkers app for a PHP, Apache, and MySQL (LAMP) server. Players create accounts, start multiplayer games with a six-character invite code, or play solo against Gridlock AI at easy, medium, or hard difficulty. The interface is available in English, German, French, and Spanish. Wins, losses, draws, and the leaderboard are stored in MySQL.
 
 ## Requirements
 
@@ -28,10 +28,16 @@ No build step or third-party PHP packages are required. Keep `schema.sql` outsid
 
 ### Existing installations
 
-Back up your database, then run `upgrade-single-player.sql` once against the existing `multi_tictactoe` database before deploying the updated PHP files. This adds the game-mode and winner-symbol columns while keeping existing games as multiplayer.
+Back up your database, then run the migration matching your current schema once against the existing `multi_tictactoe` database before deploying the updated PHP files:
+
+- If you have only multiplayer mode, run `upgrade-single-player.sql`, then `upgrade-ai-difficulty.sql`, `upgrade-checkers.sql`, and `upgrade-abort.sql`.
+- If you have single-player mode but no AI difficulty selector, run `upgrade-ai-difficulty.sql`, then `upgrade-checkers.sql` and `upgrade-abort.sql`.
+- If you already have selectable AI difficulty, run `upgrade-checkers.sql`, then `upgrade-abort.sql`.
+
+Existing games keep their multiplayer mode and use medium as the default AI difficulty.
 
 ## Play
 
-Create an account or sign in, then select **Start a game** and share the displayed code with another signed-in player, or choose **Play against AI** for a solo game. In either mode, X starts. The AI plays as O, taking an immediate win when available, blocking an immediate player win, and otherwise preferring the center and corners. The server validates moves and updates stats when a game ends. AI games count toward player stats and the leaderboard; the leaderboard ranks players by wins, with games played as the tiebreaker.
+Choose **Tic-tac-toe** or **Checkers** in the game selector, then select **Start a game** and share the code with another signed-in player, or choose an AI difficulty and select **Play against AI**. Checkers follows American rules: an 8×8 board, forward-moving men, kings that move both ways, mandatory captures, and continued jumps when available. Easy AI plays randomly, medium uses capture and promotion tactics, and hard looks ahead for replies. Tic-tac-toe AI difficulty works as before. The server validates moves and updates stats when a game ends. AI games count toward player stats and the leaderboard. Use the language selector to switch between English, German, French, and Spanish; the selection is remembered in your browser.
 
 Game moves are validated and serialized in MySQL transactions. The client polls for updates, so the app works on ordinary PHP hosting without a separate websocket server.
